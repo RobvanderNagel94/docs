@@ -5,4 +5,9 @@ title: Home
 
 # Welcome
 
-See [Docker Commands](./docker)
+See [Docker](./docker)
+See [Tmux](./tmux)
+See [Os](./os)
+See [Elastic](./elastic)
+See [Terraform](./terraform)
+See [OpenTofu](./opentofu)

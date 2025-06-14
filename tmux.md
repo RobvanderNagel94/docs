@@ -1,4 +1,8 @@
-## Commands
+---
+layout: default
+title: Tmux
+---
+
 ```bash
 tmux                         # Start a new session
 tmux new -s <session-name>   # Create a named session
@@ -8,19 +12,19 @@ tmux kill-session -t <name>  # Kill a specific session
 ```
 
 ## Shortcuts
-| Shortcut       | Action                    |
-| -------------- | ------------------------- |
-| `Ctrl+b d`     | Detach from session       |
-| `Ctrl+b %`     | Split window vertically   |
-| `Ctrl+b "`     | Split window horizontally |
-| `Ctrl+b o`     | Switch between panes      |
-| `Ctrl+b x`     | Kill current pane         |
-| `Ctrl+b c`     | Create a new window       |
-| `Ctrl+b n / p` | Next / Previous window    |
-| `Ctrl+b ,`     | Rename current window     |
-| `Ctrl+b [`     | Scrollback mode           |
-| `Ctrl+b :`     | Command prompt            |
-| `Ctrl+b ->`    | Switch pane to right (l,u,d)  |
+```bash
+`Ctrl+b d`     # Detach from session       
+`Ctrl+b %`     # Split window vertically   
+`Ctrl+b "`     # Split window horizontally 
+`Ctrl+b o`     # Switch between panes      
+`Ctrl+b x`     # Kill current pane         
+`Ctrl+b c`     # Create a new window       
+`Ctrl+b n / p` # Next / Previous window    
+`Ctrl+b ,`     # Rename current window     
+`Ctrl+b [`     # Scrollback mode           
+`Ctrl+b :`     # Command prompt            
+`Ctrl+b ->`    # Switch pane to right (l,u,d)  
+```
 
 ## Examples
 

@@ -1,5 +1,8 @@
-##  Table of Contents
-
+---
+layout: default
+title: Os
+---
+## Commands
 - [1. System Info](#1-system-info)
 - [2. File and Directory Management](#2-file-and-directory-management)
 - [3. Search](#3-search)
