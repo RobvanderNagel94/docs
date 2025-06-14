@@ -1,6 +1,6 @@
 ---
 layout: default
-title: Docker Commands
+title: Docker
 ---
 ```bash
 docker ps                     # List running containers
