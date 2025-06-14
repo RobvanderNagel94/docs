@@ -1,3 +1,23 @@
 title: Document Site
+description: Comprehensive documentation for the project.
 markdown: kramdown
 theme: minima
+
+plugins:
+  - jekyll-feed
+  - jekyll-seo-tag
+
+exclude:
+  - Gemfile
+  - Gemfile.lock
+  - node_modules
+  - vendor
+
+defaults:
+  -
+    scope:
+      path: ""
+      type: "posts"
+    values:
+      layout: "post"
+      author: "QE"

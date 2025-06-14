@@ -3,6 +3,7 @@ layout: default
 title: Tmux
 ---
 
+## Commands
 ```bash
 tmux                         # Start a new session
 tmux new -s <session-name>   # Create a named session
