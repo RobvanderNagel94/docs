@@ -4,8 +4,8 @@ title: Elastic
 ---
 
 ## Commands
+### Find docs where a field contains a value
 ```bash
-# Find docs where a field contains a value
 {
   "query": {
     "match": {
@@ -13,8 +13,10 @@ title: Elastic
     }
   }
 }
+```
 
-# Term Filter (exact match)
+### Term Filter (exact match)
+```bash
 {
   "query": {
     "term": {
@@ -22,8 +24,10 @@ title: Elastic
     }
   }
 }
+```
 
-# Range Filter
+### Range Filter
+```bash
 {
   "query": {
     "range": {
@@ -34,8 +38,10 @@ title: Elastic
     }
   }
 }
+```
 
-# Time Range Filter
+### Time Range Filter
+```bash
 {
   "query": {
     "range": {
@@ -46,8 +52,10 @@ title: Elastic
     }
   }
 }
+```
 
-# Sort & Pagination
+### Sort & Pagination
+```bash
 {
   "query": {
     "match_all": {}
@@ -60,8 +68,10 @@ title: Elastic
   "from": 0,
   "size": 10
 }
+```
 
-# Boolean Logic
+### Boolean Logic
+```bash
 {
   "query": {
     "bool": {
@@ -89,8 +99,10 @@ title: Elastic
     }
   }
 }
+```
 
-# Multi-Match (search multiple fields)
+### Multi-Match (search multiple fields)
+```bash
 {
   "query": {
     "multi_match": {
@@ -99,8 +111,10 @@ title: Elastic
     }
   }
 }
+```
 
-# Fuzzy match
+### Fuzzy match
+```bash
 {
   "query": {
     "match": {
@@ -111,8 +125,10 @@ title: Elastic
     }
   }
 }
+```
 
-# Aggregations; Count by category
+### Aggregations; Count by category
+```bash
 {
   "size": 0,
   "aggs": {
@@ -123,8 +139,10 @@ title: Elastic
     }
   }
 }
+```
 
-# Average value
+### Average value
+```bash
 {
   "size": 0,
   "aggs": {
@@ -135,8 +153,10 @@ title: Elastic
     }
   }
 }
+```
 
-# Search via cURL
+### Search via cURL
+```bash
 curl -X POST "localhost:9200/my-index/_search" -H "Content-Type: application/json" -d '{
   "query": {
     "match": {
@@ -144,8 +164,10 @@ curl -X POST "localhost:9200/my-index/_search" -H "Content-Type: application/jso
     }
   }
 }'
+```
 
-# Update by query
+### Update by query
+```bash
 curl -X POST "localhost:9200/index/_update_by_query" -H "Content-Type: application/json" -d '{
   "script": {
     "source": "ctx._source.active = false"
@@ -156,7 +178,6 @@ curl -X POST "localhost:9200/index/_update_by_query" -H "Content-Type: applicati
     }
   }
 }'
-
 ```
 
 ## Example setup
@@ -198,4 +219,60 @@ curl -X GET "localhost:9200/my-index/_search" -H "Content-Type: application/json
     "match_all": {}
   }
 }'
+```
+
+## Python API
+pip install elasticsearch
+```python
+from datetime import datetime
+from elasticsearch import Elasticsearch
+
+es = Elasticsearch("http://localhost:9200")
+
+if es.ping():
+    print("Elasticsearch is up!")
+else:
+    print("Failed to connect")
+
+index_name = "my-index"
+if not es.indices.exists(index=index_name):
+    es.indices.create(
+        index=index_name,
+        body={
+            "settings": {"number_of_shards": 1, "number_of_replicas": 0},
+            "mappings": {
+                "properties": {
+                    "title": {"type": "text"},
+                    "price": {"type": "float"},
+                    "timestamp": {"type": "date"}
+                }
+            }
+        }
+    )
+    print(f"Index '{index_name}' created")
+else:
+    print(f"Index '{index_name}' already exists")
+
+# Index a document
+doc = {
+    "title": "Test document",
+    "price": 19.99,
+    "timestamp": datetime.utcnow()
+}
+res = es.index(index=index_name, id=1, document=doc)
+print("Document indexed:", res['result'])
+
+# Get document by ID
+doc_get = es.get(index=index_name, id=1)
+print("Retrieved document:", doc_get['_source'])
+
+# Search all documents with match_all query
+search_res = es.search(
+    index=index_name,
+    body={"query": {"match_all": {}}}
+)
+
+print(f"Found {search_res['hits']['total']['value']} documents")
+for hit in search_res['hits']['hits']:
+    print(hit["_source"])
 ```
