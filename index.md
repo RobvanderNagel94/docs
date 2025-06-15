@@ -1,26 +1,27 @@
 ---
 layout: default
-title: Home
+title: Index
 ---
 
-# 📚 Project Documentation Index
-## 🚀 Quick Links
+# 📚 Documentation Index
+## Quick Links
 
-- [🐳 Docker](./docker)  
+- [Docker](./docker)  
     *Containerization and deployment guides.*
-- [🔗 Tmux](./tmux)  
+- [Tmux](./tmux)  
     *Terminal multiplexing tips and tricks.*
-- [💻 OS](./os)  
+- [OS](./os)  
     *Operating system notes and best practices.*
-- [🔍 Elastic](./elastic)  
+- [Elastic](./elastic)  
     *Search and analytics engine documentation.*
-- [🌍 Terraform](./terraform)  
+- [Terraform](./terraform)  
     *Infrastructure as Code resources.*
-- [🌱 OpenTofu](./opentofu)  
+- [OpenTofu](./opentofu)  
     *Open-source alternative to Terraform.*
-- [🗄️ SQL](./sql)  
+- [SQL](./sql)  
     *Database queries and schema management.*
+- [Microservice](./infra)  
+    *Example solutions.*
 ---
 
-> _Tip: Use the navigation above or click any link to get started!_
 

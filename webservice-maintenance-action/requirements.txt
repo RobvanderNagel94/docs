@@ -1,0 +1,10 @@
+confluent-kafka 
+numpy
+pandas
+fastapi 
+uvicorn 
+pydantic 
+requests
+opensearch
+psycopg2-binary
+geopy
