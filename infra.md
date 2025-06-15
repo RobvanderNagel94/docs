@@ -5,62 +5,63 @@ title: Microservice
 
 ## Examples
 
-A microservice that runs every $2$ minute(s)  to identify sensors needing maintenance actions on these rules:
+Design a microservice that runs every eg. *hour* to identify sensors needing maintenance actions. It outputs a list of sensors and their maintenance trigger and timestamp. It only consumes messages between [last_run_time, current_time) based on these rules:
 
-- **Rule A**: Sensor has moved more than 3000 meters since init location.
+- **Rule A**: Sensor humidity exceeds when relative humidity level > 90%.
 
-- **Rule B**: Sensor values exceed the 75th percentile for more than 20 datapoints in a row.
+- **Rule B**: Sensor temperature exceeds when temperature > 40 Degrees Celsius.
 
-- **Rule C**: Sensor humidity exceeds when relative humidity level > 80% for more than 20 datapoints in a row.
-
-The service outputs sensor IDs requiring maintenance along with the triggering rule (A, B, or C).
+The service outputs sensor IDs requiring maintenance along with the triggering rule (A or B).
 
 
 ### Method
-For a set of sensors indexed by $i = 1, 2, 3, 4$. Let the output of each sensor at time $t$ be represented as:
+For a set of sensors indexed by $i = 1, 2, 3, 4$. Each sensor has a type (e.g. temperature, vibration, humidity, IR) and logs data. Additionally, each sensor is equiped with other sensory to track status indicators of the sensor, ie. lon, lat, humid and temp.
+
+Let the output of each sensor $i$ at time $t$ be represented as:
 
 $$
-\text{Sensor}_i(t) = \{ \text{id}_i, \text{type}_i, \text{location}_i(t), \text{humidity}_i(t), \text{temperature}_i(t), \text{value}_i(t), \text{timestamp}_i(t) \}
+\text{Sensor}_i(t) = ( \text{id}_i, \text{type}_i, \text{value}_i(t), \text{lon}_i(t), \text{lat}_i(t), \text{humid}_i(t), \text{temp}_i(t), \text{ts}_i(t) )
 $$
 
 where:
-- $\text{id}_i$ is the unique identifier (kafka, opensearch, postgres)
-- $\text{type}_i$ is the sensor type (postgres),
-- $\text{location}_i(t) = (\text{long}_i(t), \text{lat}_i(t))$ is the geographic position at time $t$ (opensearch),
-- $\text{humidity}_i(t)$ is the humidity level at time $t$ (opensearch),
-- $\text{temperature}_i(t)$ is the temperature level at time $t$ (opensearch),
-- $\text{value}_i(t)$ is the sensor reading at time $t$ (kafka),
-- $\text{timestamp}_i(t)$ is the time of the reading (kafka).
+- $\text{id}_i$ is the unique identifier
+- $\text{type}_i$ is the sensor type ["temperature", "vibration", "humidity", "IR"]
+- $\text{value}_i(t)$ is the sensor reading at time $t$
+- $\text{lon}_i(t)$ is the longitudinal coordinate at time $t$
+- $\text{lat}_i(t)$ is the latitudinal coordinate at time $t$
+- $\text{humid}_i(t)$ is the humidity level at time $t$
+- $\text{temp}_i(t)$ is the temperature level at time $t$
+- $\text{ts}_i(t)$ is the time of the reading.
 
-Note that there are three DB involved; 
-- **kafka** (sensor), 
-- **postgres** (meta sensor), 
-- **opensearch** (location & environment sensor). 
-
-Basically, the sensor sends data to two bigdata stores. Metadata of the sensor and their last maintenance data is stored in postgres.
+For each sensor three steps are done. Metadata *id, type, unit* and *last_maintenance_date* are saved in **postgres**. Sensor values *id, value, ts* are saved to **kafka**. Internal sensor values are stored in **opensearch**, eg, *id, lon, lat, humid, temp, ts*.
 
 **Example static Postgres**
 
 ```
-id, type, last_maintenance_date
-(1, 'vibration', '2023-01-01T00:00:00Z'),
-(2, 'humidity', NULL),
-(3, 'temperature', '2022-04-01T00:00:00Z'),
-(4, 'pressure', '2023-05-15T12:30:00Z'),
+id, type, unit, last_maintenance_date
+(1, 'vibration', 'mm/s' ,'2023-01-01T00:00:00Z'),
+(2, 'vibration', 'mm/s,  NULL),
+(3, 'pressure', 'mbar', '2022-04-01T00:00:00Z'),
+(4, 'vibration', 'mm/s, '2023-05-15T12:30:00Z'),
 ```
 
 **Example stream to Kafka**
 ```
-{"id": 1, "value": 0.123, "timestamp": "2025-01-01T00:00:00Z"}
+{"id": 1, "value": 0.123, "ts": "2025-01-01T00:00:00Z"}
 ```
-to a kafka broker on topic name `"sensorvalues"`.
+to a kafka broker on topic name `"rawsensorvalues"`.
 
 **Example stream to Opensearch**
 ```
-{"id": 1, "long": 4.895168, "lat": 52.370216, "humidity": 82.5, "temperature": 20.0, "timestamp": "2025-01-01T00:00:00Z"}
+{"id": 1, "lon": 4.895168, "lat": 52.370216, "humid": 82.5, "temp": 20.0, "ts": "2025-01-01T00:00:00Z"}
 ```
 
-to a opensearch broker on name `"myindex"`.
+to a opensearch broker on name `"sensorindex"`.
+
+Note that there are three DB involved: 
+- **postgres** (meta sensor)
+- **kafka** (raw sensor values)
+- **opensearch** (internal sensor values) 
 
 ---
 
@@ -159,14 +160,15 @@ Now add the following:
 CREATE TABLE sensors (
     id INTEGER PRIMARY KEY,
     type VARCHAR(50) NOT NULL,
+    unit VARCHAR(50) NOT NULL,
     last_maintenance_date TIMESTAMP NULL
 );
 
-INSERT INTO sensors (id, type, last_maintenance_date) VALUES
-    (1, 'vibration', '2023-01-01T00:00:00Z'),
-    (2, 'humidity', NULL),
-    (3, 'temperature', '2022-04-01T00:00:00Z'),
-    (4, 'pressure', '2023-05-15T12:30:00Z'),
+INSERT INTO sensors (id, type, unit, last_maintenance_date) VALUES
+    (1, 'vibration', 'mm/s' ,'2023-01-01T00:00:00Z'),
+    (2, 'vibration', 'mm/s',  NULL),
+    (3, 'pressure',  'mbar', '2022-04-01T00:00:00Z'),
+    (4, 'vibration', 'mm/s', '2023-05-15T12:30:00Z');
 ```
 
 ## Kafka 
@@ -174,23 +176,23 @@ INSERT INTO sensors (id, type, last_maintenance_date) VALUES
 **subscribe to kafka topic**
 ```bash
 ## Set topic
-docker exec -it kafka kafka-topics --create --bootstrap-server localhost:9092 --replication-factor 1 --partitions 1 --topic sensorvalues
+docker exec -it kafka kafka-topics --create --bootstrap-server localhost:9092 --replication-factor 1 --partitions 1 --topic rawsensorvalues
 
 ## List topics
 docker exec -it kafka kafka-topics --list --bootstrap-server kafka:9092
 
 ## Produce
-docker exec -it kafka kafka-console-producer --topic message_topic --bootstrap-server localhost:9092
+docker exec -it kafka kafka-console-producer --topic rawsensorvalues --bootstrap-server localhost:9092
 
 ## Consume
-docker exec -it kafka kafka-console-consumer --topic message_topic --bootstrap-server localhost:9092 --from-beginning
+docker exec -it kafka kafka-console-consumer --topic rawsensorvalues --bootstrap-server localhost:9092 --from-beginning
 ```
 
 ## Opensearch
 
 **create elastic index**
 ```bash
-docker exec -it opensearch curl -X PUT "localhost:9200/myindex" -H 'Content-Type: application/json' -d'
+docker exec -it opensearch curl -X PUT "localhost:9200/sensorindex" -H 'Content-Type: application/json' -d'
 {
   "settings": {
     "number_of_shards": 1,
@@ -199,32 +201,32 @@ docker exec -it opensearch curl -X PUT "localhost:9200/myindex" -H 'Content-Type
 }
 '
 ```
-**add a sample document**
+**add a document**
 ```bash
-docker exec -it opensearch curl -X POST "localhost:9200/myindex/_doc/1" -H 'Content-Type: application/json' -d'
+docker exec -it opensearch curl -X POST "localhost:9200/sensorindex/_doc/1" -H 'Content-Type: application/json' -d'
 {
   "id": 1,
-  "long": 4.895168,
+  "lon": 4.895168,
   "lat": 52.370216,
-  "humidity": 0.4,
-  "temperature": 23,
-  "timestamp": "2025-06-14T12:00:00Z"
+  "humid": 0.4,
+  "temp": 23,
+  "ts": "2025-06-14T12:00:00Z"
 }
 '
 ```
 **check document indexed correctly**
 ```bash
-docker exec -it opensearch curl -X GET "localhost:9200/myindex/_doc/1"
+docker exec -it opensearch curl -X GET "localhost:9200/sensorindex/_doc/1"
 ```
 
 **delete a document**
 ```bash
-docker exec -it opensearch curl -X DELETE "localhost:9200/myindex/_doc/1"
+docker exec -it opensearch curl -X DELETE "localhost:9200/sensorindex/_doc/1"
 ```
 
 **search the index**
 ```bash
-docker exec -it opensearch curl -X GET "localhost:9200/myindex/_search" -H 'Content-Type: application/json' -d'
+docker exec -it opensearch curl -X GET "localhost:9200/sensorindex/_search" -H 'Content-Type: application/json' -d'
 {
   "query": {
     "match_all": {}
@@ -236,35 +238,131 @@ docker exec -it opensearch curl -X GET "localhost:9200/myindex/_search" -H 'Cont
 ## Publishers
 Kafka-confluent and Opensearch with python
 
-**pub/main.py**
-pip install flastapi confluent-kafka opensearch
+**pub/kafka-broker.py**
+pip install flastapi confluent-kafka opensearch pydantic
 
 ```python
-from fastapi import FastAPI
-from confluent_kafka import Producer
+ffrom fastapi import FastAPI, HTTPException
+from confluent_kafka import Producer, admin
+from pydantic import BaseModel
 import socket
-
-topic = "sensorvalues"
 
 app = FastAPI()
 
-conf = {
-    'bootstrap.servers': 'kafka:29092',
-    'client.id': socket.gethostname()
-}
-producer = Producer(conf)
+KAFKA_URL = "kafka:29092"
+KAFKA_TOPIC = "rawsensorvalues"
+
+# Kafka configuration
+producer = Producer({
+    "bootstrap.servers": KAFKA_URL,
+    "client.id": socket.gethostname()
+})
+
+class KafkaEvent(BaseModel):
+    id: str
+    value: float
+    ts: str
+
+class TopicRequest(BaseModel):
+    topic_name: str = KAFKA_TOPIC
+    num_partitions: int = 1
+    replication_factor: int = 1
 
 @app.post("/produce")
-def produce(message: str):
+def produce_event(event: KafkaEvent):
     try:
-        producer.produce(topic, key='key', value=message)
+        producer.produce(KAFKA_TOPIC, key=event.id, value=event.json())
         producer.flush()
-        return {"status": "sent", "message": message}
+        return {"status": "sent", "message": event.dict()}
     except Exception as e:
-        return {"status": "error", "detail": str(e)}
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/create-topic")
+def create_kafka_topic(request: TopicRequest):
+    try:
+        admin_client = admin.AdminClient({"bootstrap.servers": KAFKA_URL})
+        new_topic = admin.NewTopic(
+            request.topic_name,
+            num_partitions=request.num_partitions,
+            replication_factor=request.replication_factor
+        )
+        fs = admin_client.create_topics([new_topic])
+        for _, f in fs.items():
+            f.result()
+        return {"status": "created", "topic": request.topic_name}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 ```
 
-And the `Dockerfile.pub.broker`
+**pub/opensearch-broker.py** pip install requests fastapi opensearch pydantic
+
+```python
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+import requests
+
+OPENSEARCH_URL = "http://opensearch:9200"
+INDEX_NAME = "sensorindex"
+
+app = FastAPI()
+
+class SensorDocument(BaseModel):
+    id: int
+    lon: float
+    lat: float
+    humid: float
+    temp: float
+    ts: str
+
+@app.put("/create-index")
+def create_index():
+    url = f"{OPENSEARCH_URL}/{INDEX_NAME}"
+    body = {
+        "settings": {
+            "number_of_shards": 1,
+            "number_of_replicas": 0
+        }
+    }
+    r = requests.put(url, json=body)
+    if r.status_code not in (200, 201):
+        raise HTTPException(status_code=r.status_code, detail=r.text)
+    return {"status": "created", "response": r.json()}
+
+@app.post("/add-doc")
+def add_document(doc: SensorDocument):
+    url = f"{OPENSEARCH_URL}/{INDEX_NAME}/_doc/{doc.id}"
+    r = requests.post(url, json=doc.dict())
+    if r.status_code not in (200, 201):
+        raise HTTPException(status_code=r.status_code, detail=r.text)
+    return {"status": "indexed", "response": r.json()}
+
+@app.get("/get-doc/{doc_id}")
+def get_document(doc_id: int):
+    url = f"{OPENSEARCH_URL}/{INDEX_NAME}/_doc/{doc_id}"
+    r = requests.get(url)
+    if r.status_code == 404:
+        raise HTTPException(status_code=404, detail="Document not found")
+    return r.json()
+
+@app.delete("/delete-doc/{doc_id}")
+def delete_document(doc_id: int):
+    url = f"{OPENSEARCH_URL}/{INDEX_NAME}/_doc/{doc_id}"
+    r = requests.delete(url)
+    if r.status_code != 200:
+        raise HTTPException(status_code=r.status_code, detail=r.text)
+    return {"status": "deleted", "response": r.json()}
+
+@app.get("/search")
+def search_all():
+    url = f"{OPENSEARCH_URL}/{INDEX_NAME}/_search"
+    r = requests.get(url, json={"query": {"match_all": {}}})
+    if r.status_code != 200:
+        raise HTTPException(status_code=r.status_code, detail=r.text)
+    return r.json()
+```
+
+
+And the `Dockerfile.kafka` and `Dockerfile.opensearch`, respectively
 
 ```Dockerfile
 FROM python:3.11-slim
@@ -277,11 +375,22 @@ COPY . .
 RUN chmod +x wait-for-kafka.sh
 CMD ["./wait-for-kafka.sh"]
 ```
+```Dockerfile
+FROM python:3.11-slim
+WORKDIR /app
+RUN apt-get update && apt-get install -y netcat-openbsd && rm -rf /var/lib/apt/lists/*
+RUN pip install fastapi uvicorn pydantic requests opensearch
+# COPY requirements.txt .
+# RUN pip install --no-cache-dir -r requirements.txt
+COPY . .
+CMD ["uvicorn", "opensearch-broker:app", "--host", "0.0.0.0", "--port", "8001", "--reload"]
+```
+
 with shell script `wait-for-kafka.sh`
 
 ```bash
 #!/bin/sh
-echo "⏳ Waiting for Kafka at $KAFKA_BOOTSTRAP_SERVERS..."
+echo "Waiting for Kafka at $KAFKA_BOOTSTRAP_SERVERS..."
 until nc -z kafka 29092; do
   sleep 15
 done
@@ -291,13 +400,27 @@ exec uvicorn main:app --host 0.0.0.0 --port 8000
 
 Now add this to the previous docker-compose.yml:
 ```Dockerfile
-  pub-kafka:
+  api-pub-kafka:
     build:
       context: ./pub
-      dockerfile: Dockerfile.pub.broker
-    container_name: pub-kafka
+      dockerfile: Dockerfile.kafka
+    container_name: api-pub-kafka
     ports:
       - "8100:8000"
+    depends_on:
+      - kafka
+      - postgres
+      - opensearch
+    env_file:
+      - .env
+
+  api-pub-opensearch:
+    build:
+      context: ./pub
+      dockerfile: Dockerfile.opensearch
+    container_name: api-pub-opensearch
+    ports:
+      - "8101:8001"
     depends_on:
       - kafka
       - postgres
@@ -315,177 +438,125 @@ docker compose --env-file .env up --build
 Now check if this works:
 
 ```bash
-curl -X POST "http://localhost:8100/produce?message=HelloKafka"
-```
-This should produce: 
-```
-{"status":"sent","message":"HelloKafka"} 
+curl -X POST http://localhost:8100/create-topic \
+  -H "Content-Type: application/json" \
+  -d '{"topic": "rawsensorvalues"}'
+
+curl -X POST http://localhost:8100/produce \
+  -H "Content-Type: application/json" \
+  -d '{
+    "id": "1",
+    "value": 0.532,
+    "ts": "2025-06-15T10:00:00Z"
+}'
+
+curl -X PUT http://localhost:8101/create-index
+
+curl -X POST http://localhost:8101/add-doc \
+  -H "Content-Type: application/json" \
+  -d '{
+    "id": 1,
+    "lon": 4.895168,
+    "lat": 52.370216,
+    "humid": 50.0,
+    "temp": 20.0,
+    "ts": "2025-06-15T10:00:00Z"
+}'
+
+curl http://localhost:8101/search
 ```
 
-**stream-data.py**
+**pub/stream-data.py**
 pip install pydantic requests numpy
 ```python
-import numpy as np
 import random
 import time
-import pydantic
+from pydantic import BaseModel
 import requests
 import subprocess
-import os
 
 KAFKA_PRODUCE_URL = "http://localhost:8100/produce"
-KAFKA_TOPIC = "sensorvalues"
-OPENSEARCH_URL = "http://localhost:9200"
-OPENSEARCH_INDEX = "myindex"
+OPENSEARCH_ADD_INDEX_URL = "http://localhost:8101/add-doc"
+KAFKA_TOPIC = "rawsensorvalues"
+OPENSEARCH_INDEX = "sensorindex"
 
-# Initial state for each sensor
-init_position = {
-    1: {"lat": 52.370216, "long": 4.895168},
-    2: {"lat": 40.712776, "long": -74.005974},
-    3: {"lat": 34.052235, "long": -33.243683},
-    4: {"lat": 37.774929, "long": -122.419416},
+sensor_types = ["vibration", "vibration", "pressure", "vibration"]
+sensor_ids = [1, 2, 3, 4]
+
+init_values = {
+    1: {"value": 0.242, "temp": 20.0, "humid": 50.0, "lat": 52.370216, "lon": 4.895168, "ts": "2025-01-01T00:00:00Z"},
+    2: {"value": 0.542, "temp": 21.0, "humid": 55.0, "lat": 40.712776, "lon": -74.005974, "ts": "2025-01-01T00:00:00Z"},
+    3: {"value": 29.454, "temp": 22.0, "humid": 45.0, "lat": 34.052235, "lon": -33.243683, "ts": "2025-01-01T00:00:00Z"},
+    4: {"value": 0.906, "temp": 19.0, "humid": 60.0, "lat": 37.774929, "lon": -122.419416, "ts": "2025-01-01T00:00:00Z"},
 }
 
-# Initial values (base) for drifting fields
-sensor_values = {
-    1: {"temperature": 20.0, "humidity": 50.0},
-    2: {"temperature": 21.0, "humidity": 55.0},
-    3: {"temperature": 22.0, "humidity": 45.0},
-    4: {"temperature": 23.0, "humidity": 60.0},
+init_boundaries = {
+    1: {"value": (-1, 1), "temp": (0, 50), "humid": (0, 100), "lat": (52.36, 52.38), "lon": (4.89, 4.91)},
+    2: {"value": (-1, 1), "temp": (0, 50), "humid": (0, 100), "lat": (40.70, 40.73), "lon": (-74.01, -74.00)},
+    3: {"value": (-50, 50), "temp": (0, 50), "humid": (0, 100), "lat": (34.05, 34.06), "lon": (-33.25, -33.24)},
+    4: {"value": (-1, 1), "temp": (0, 50), "humid": (0, 100), "lat": (37.77, 37.78), "lon": (-122.42, -122.41)},
 }
 
-# Example drift configuration
-simulate = {
-    1: {"drift": "high", "fields": ["lat", "long"]},
-    2: {"drift": "high", "fields": ["temperature", "humidity"]},
-    3: {"drift": "low", "fields": ["temperature"]},
-    4: {"drift": "low", "fields": ["humidity"]},
-}
-
-class KafkaEvent(pydantic.BaseModel):
+class KafkaEvent(BaseModel):
     id: str
     value: float
-    timestamp: str
+    ts: str
 
-class OpensearchDocument(pydantic.BaseModel):
+class OpensearchDocument(BaseModel):
     id: str
-    long: float
+    lon: float
     lat: float
-    humidity: float
-    temperature: float
-    timestamp: str
-
-def generate_value(sensor_id, step, field):
-    base = sensor_values[sensor_id][field]
-    drift_level = simulate[sensor_id]["drift"] if field in simulate[sensor_id]["fields"] else "none"
-
-    if drift_level == "high":
-        delta = np.random.normal(loc=0.1, scale=0.05)
-    elif drift_level == "low":
-        delta = np.random.normal(loc=0.02, scale=0.01)
-    else:
-        delta = np.random.normal(loc=0.0, scale=0.005)
-
-    value = base + delta
-    # Keep values within sensible range
-    if field == "humidity":
-        value = max(0.0, min(100.0, value))
-    elif field == "temperature":
-        value = max(-40.0, min(100.0, value))
-
-    sensor_values[sensor_id][field] = value
-    return value
-
-def update_position(sensor_id, lat, long):
-    drift_level = simulate[sensor_id]["drift"] if "lat" in simulate[sensor_id]["fields"] else "none"
-    if drift_level == "high":
-        step_lat = random.uniform(-0.01, 0.01)
-        step_long = random.uniform(-0.02, 0.02)
-    elif drift_level == "low":
-        step_lat = random.uniform(-0.001, 0.001)
-        step_long = random.uniform(-0.001, 0.001)
-    else:
-        step_lat = random.uniform(-0.0001, 0.0001)
-        step_long = random.uniform(-0.0001, 0.0001)
-    return lat + step_lat, long + step_long
-
-def create_index():
-    url = f"{OPENSEARCH_URL}/{OPENSEARCH_INDEX}"
-    resp = requests.put(url, json={
-        "settings": {"number_of_shards": 1, "number_of_replicas": 0}
-    })
-    print(f"[OpenSearch] Index creation: {resp.status_code} {resp.text}")
+    humid: float
+    temp: float
+    ts: str
 
 def create_topic():
-    try:
-        result = subprocess.run(
-            ["docker", "exec", "kafka", "kafka-topics", "--list", "--bootstrap-server", "localhost:9092"],
-            capture_output=True, text=True
-        )
-        if KAFKA_TOPIC not in result.stdout:
-            subprocess.run([
-                "docker", "exec", "kafka", "kafka-topics", "--create",
-                "--bootstrap-server", "localhost:9092",
-                "--replication-factor", "1", "--partitions", "1",
-                "--topic", KAFKA_TOPIC
-            ])
-            print(f"Kafka topic '{KAFKA_TOPIC}' created.")
-        else:
-            print(f"Kafka topic '{KAFKA_TOPIC}' already exists.")
-    except Exception as e:
-        print(f"Error managing Kafka topic: {e}")
+    run = subprocess.run(["curl", "http://localhost:8100/create-topic"], capture_output=True, text=True)
 
-def stream(event_coun):
-    sensor_ids = list(init_position.keys())
+def create_index():
+    run = subprocess.run(["curl", "http://localhost:8101/create-index"], capture_output=True, text=True)
 
-    for i in range(1, event_count + 1):
+def random_value(sensor_id, field):
+    low, high = init_boundaries[sensor_id][field]
+    return round(random.uniform(low, high), 6)
+
+def stream(event_count, delay):
+    for i in range(event_count):
         sensor_id = random.choice(sensor_ids)
-
-        # Update position
-        pos = init_position[sensor_id]
-        new_lat, new_long = update_position(sensor_id, pos["lat"], pos["long"])
-        init_position[sensor_id]["lat"] = new_lat
-        init_position[sensor_id]["long"] = new_long
-
         timestamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
-        # Generate sensor values
-        temp_val = generate_value(sensor_id, i, "temperature")
-        humidity_val = generate_value(sensor_id, i, "humidity")
+        # Generate values within boundaries
+        value = random_value(sensor_id, "value")
+        temp = random_value(sensor_id, "temp")
+        humid = random_value(sensor_id, "humid")
+        lat = random_value(sensor_id, "lat")
+        lon = random_value(sensor_id, "lon")
 
-        # Send Kafka events
-        for val in [("temperature", temp_val), ("humidity", humidity_val)]:
-            event = KafkaEvent(id=str(sensor_id), value=float(val[1]), timestamp=timestamp)
-            kafka_resp = requests.post(KAFKA_PRODUCE_URL, params={"message": event.json()})
-            if kafka_resp.status_code == 200:
-                print(f"[Kafka] Sent {val[0]} event: {event.json()}")
-            else:
-                print(f"[Kafka] Failed to send {val[0]} event: {kafka_resp.text}")
+        # Send Kafka event (primary sensor measurement only)
+        kafka_event = KafkaEvent(id=str(sensor_id), value=value, ts=timestamp)
+        try:
+            resp = requests.post(KAFKA_PRODUCE_URL, json=kafka_event.dict())
+            resp.raise_for_status()
+            print(f"[Kafka] Sent value={value:.3f} | id={sensor_id}, ts={timestamp}")
+        except Exception as e:
+            print(f"[Kafka] Error: {e}")
 
-        # Send to OpenSearch
-        os_doc = OpensearchDocument(
-            id=str(sensor_id),
-            lat=new_lat,
-            long=new_long,
-            temperature=float(temp_val),
-            humidity=float(humidity_val),
-            timestamp=timestamp
-        )
-        doc_id = f"{sensor_id}-{i}"
-        os_url = f"{OPENSEARCH_URL}/{OPENSEARCH_INDEX}/_doc/{doc_id}"
-        os_resp = requests.post(os_url, json=os_doc.dict())
-        if os_resp.status_code in (200, 201):
-            print(f"[OpenSearch] Indexed doc: {doc_id}")
-        else:
-            print(f"[OpenSearch] Failed to index doc: {os_resp.text}")
+        # Send OpenSearch document (sensor internal state)
+        os_doc = OpensearchDocument(id=str(sensor_id), lon=lon, lat=lat, humid=humid, temp=temp, ts=timestamp)
+        try:
+            resp = requests.post(OPENSEARCH_ADD_INDEX_URL, json=os_doc.dict())
+            resp.raise_for_status()
+            print(f"[OpenSearch] Indexed id={sensor_id}, ts={timestamp}, lon={lon}, lat={lat}, humid={humid}, temp={temp}")
+        except Exception as e:
+            print(f"[OpenSearch] Error: {e}")
 
-        # Optional delay
-        # time.sleep(0.1)
+        time.sleep(delay)
 
 if __name__ == "__main__":
-    create_index()
     create_topic()
-    stream(10000)
+    create_index()
+    # Start streaming data
+    stream(event_count=10000, delay=0.0)
 ```
 
 Now, make sure venv is enabled (python3 -m venv venv, source venv/bin/activate pip install .. ) and run 
@@ -496,61 +567,84 @@ python stream-data.py
 
 this will look like:
 
-  [OpenSearch] Indexed doc: 2-802
-  [Kafka] Sent temperature event: {"id":"4","value":22.995006348036892,"timestamp":"2025-06-14T23:47:17Z"}
-  [Kafka] Sent humidity event: {"id":"4","value":63.76472341161971,"timestamp":"2025-06-14T23:47:17Z"}
-  [OpenSearch] Indexed doc: 4-803
-  [Kafka] Sent temperature event: {"id":"3","value":25.82034944019731,"timestamp":"2025-06-14T23:47:17Z"}
-  [Kafka] Sent humidity event: {"id":"3","value":45.16394527383489,"timestamp":"2025-06-14T23:47:17Z"}
+[Kafka] Sent value=43.664 | id=3, ts=2025-06-15T15:52:20Z
+[OpenSearch] Indexed id=3, ts=2025-06-15T15:52:20Z, lon=-33.243837, lat=34.054073, humid=40.910258, temp=21.32264
+[Kafka] Sent value=-47.677 | id=3, ts=2025-06-15T15:52:20Z
+[OpenSearch] Indexed id=3, ts=2025-06-15T15:52:20Z, lon=-33.242361, lat=34.056848, humid=17.489111, temp=44.032833
+[Kafka] Sent value=0.694 | id=3, ts=2025-06-15T15:52:20Z
+[OpenSearch] Indexed id=3, ts=2025-06-15T15:52:20Z, lon=-33.244146, lat=34.054948, humid=78.588193, temp=38.279888
 
-## Consumers
+## Consumers (microservice)
 **sub/main.py**
-pip install flastapi confluent-kafka opensearch psycopg2
+pip install fastapi confluent-kafka opensearch psycopg2 requests
 ```python
+import os
+import json
+import threading
+from datetime import datetime
 from confluent_kafka import Consumer
 from fastapi import FastAPI
-import threading
-import json
 import requests
 import psycopg2
-from geopy.distance import geodesic
-import statistics
-import os
 
-KAFKA_CONSUME_URL = "http://localhost:8100/consume"
-KAFKA_TOPIC = "sensorvalues"
+KAFKA_TOPIC = "rawsensorvalues"
+LAST_RUN_FILE = "last_runs.txt"
 OPENSEARCH_URL = "http://localhost:9200"
-OPENSEARCH_INDEX = "myindex"
+OPENSEARCH_INDEX = "sensorindex"
+
+messages = []
+actions = []
 
 app = FastAPI()
 
 conf = {
     'bootstrap.servers': 'kafka:29092',
-    'group.id': 'test-group',
-    'auto.offset.reset': 'earliest'
+    'group.id': 'hourly-validator',
+    'auto.offset.reset': 'earliest',
+    'enable.auto.commit': False
 }
 
 consumer = Consumer(conf)
 consumer.subscribe([KAFKA_TOPIC])
 
-messages = []
-actions = []
 
-init_positions = {
-    1: (52.370216, 4.895168),
-    2: (40.712776, -74.005974),
-    3: (34.052235, -33.243683),
-    4: (37.774929, -122.419416),
-}
+def log_run_time():
+    now = datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+    with open(LAST_RUN_FILE, "a") as f:
+        f.write(f"{now}\n")
+    return now
 
-def fetch_opensearch_data(sensor_id):
+
+def get_last_run_time():
+    try:
+        if not os.path.exists(LAST_RUN_FILE):
+            return None
+        with open(LAST_RUN_FILE, "r") as f:
+            lines = f.readlines()
+            if lines:
+                return lines[-1].strip()
+        return None
+    except Exception as e:
+        print(f"[ERROR] Could not read last run time: {e}")
+        return None
+
+
+def fetch_opensearch_data(sensor_id, from_time, to_time):
     try:
         url = f"{OPENSEARCH_URL}/{OPENSEARCH_INDEX}/_search"
         query = {
             "size": 1000,
             "query": {
-                "match": {
-                    "id": str(sensor_id)
+                "bool": {
+                    "must": [
+                        {"match": {"id": str(sensor_id)}},
+                        {"range": {
+                            "timestamp": {
+                                "gt": from_time,
+                                "lt": to_time
+                            }
+                        }}
+                    ]
                 }
             }
         }
@@ -565,112 +659,130 @@ def fetch_opensearch_data(sensor_id):
         print(f"OpenSearch error: {e}")
         return []
 
+
 def fetch_postgres_metadata(sensor_id):
     try:
         conn = psycopg2.connect(
-            dbname=os.getenv("POSTGRES_DB"), user=os.getenv("POSTGRES_USER"), password=os.getenv("POSTGRES_PASSWORD"),
-            host="localhost", port=os.getenv("POSTGRES_PORT", "5432")
+            dbname=os.getenv("POSTGRES_DB"),
+            user=os.getenv("POSTGRES_USER"),
+            password=os.getenv("POSTGRES_PASSWORD"),
+            host="localhost",
+            port=os.getenv("POSTGRES_PORT", "5432")
         )
         cur = conn.cursor()
-        cur.execute("SELECT * FROM sensors WHERE id = %s", (sensor_id,))
+        cur.execute("SELECT id, type, unit, last_maintenance_date FROM sensors WHERE id = %s", (sensor_id,))
         result = cur.fetchone()
         cur.close()
         conn.close()
-        return result
+        return result  # (id, type, unit, last_maintenance_date)
     except Exception as e:
         print(f"PostgreSQL error: {e}")
         return None
 
-# Compute distance from initial position
-def compute_total_drift(sensor_id, historical_docs):
-    if not historical_docs:
-        return 0.0
-    init_lat, init_long = init_positions[sensor_id]
-    last = historical_docs[-1]
-    current_lat = last['lat']
-    current_long = last['long']
-    return geodesic((init_lat, init_long), (current_lat, current_long)).meters
 
-# Validate rules and push actions
-def validate_rules(sensor_id, sensor_value, sensor_type, history):
+def validate_rules(sensor_id, sensor_type, unit, history, last_maintenance_date):
     triggered = []
 
-    # Rule 1: Distance drift
-    drift = compute_total_drift(sensor_id, history)
-    if drift > 1000:
-        triggered.append(f"Maintenance: Sensor {sensor_id} drifted {int(drift)} meters")
+    if not history:
+        return triggered
 
-    # Rule 2: Humidity threshold
-    if sensor_type == 'humidity' and sensor_value > 80:
-        triggered.append(f"Alert: Sensor {sensor_id} humidity too high: {sensor_value:.2f}%")
+    if sensor_type in ['vibration', 'pressure']:
+        for doc in history:
+            humidity = doc.get('humid')
+            temperature = doc.get('temperature')
 
-    # Rule 3: Value above 75th percentile
-    if len(history) > 10 and sensor_type in ['temperature', 'humidity']:
-        recent_vals = [h[sensor_type] for h in history if sensor_type in h]
-        if recent_vals:
-            p75 = statistics.quantiles(recent_vals, n=4)[2]
-            if all(v > p75 for v in recent_vals[-5:]):
-                triggered.append(f"Spike: Sensor {sensor_id} {sensor_type} persistently above 75th percentile")
-    
+            if humidity is not None and humidity > 80:
+                triggered.append({
+                    "id": sensor_id,
+                    "rule": "High humidity > 80",
+                    "unit": unit,
+                    "type": doc.get('type', sensor_type),
+                    "lat": doc.get('lat'),
+                    "lon": doc.get('lon'),
+                    "last_maintenance_date": last_maintenance_date,
+                    "ts": doc.get('timestamp')
+                })
+                break
+
+            if temperature is not None and temperature > 70:
+                triggered.append({
+                    "id": sensor_id,
+                    "rule": "High temperature > 70",
+                    "unit": unit,
+                    "type": doc.get('type', sensor_type),
+                    "lat": doc.get('lat'),
+                    "lon": doc.get('lon'),
+                    "last_maintenance_date": last_maintenance_date,
+                    "ts": doc.get('timestamp')
+                })
+                break
+
     return triggered
 
-def guard_maintenance_policy(message_value: str):
-    try:
-        message_dict = json.loads(message_value)
-        sensor_id = int(message_dict.get("id"))
-        sensor_value = float(message_dict.get("value"))
-        timestamp = message_dict.get("timestamp")
 
-        if sensor_id not in init_positions:
-            print("ID not in known sensor list.")
+def guard_maintenance_policy(message_value: str, from_time, to_time):
+    try:
+        data = json.loads(message_value)
+        sensor_id = int(data.get("id"))
+        timestamp = data.get("timestamp")
+
+        if not sensor_id or not timestamp:
+            print("[WARN] Incomplete Kafka message.")
             return
 
-        # Try to infer sensor type
-        sensor_type = "temperature" if sensor_value < 70 else "humidity"
-
-        history = fetch_opensearch_data(sensor_id)
         metadata = fetch_postgres_metadata(sensor_id)
+        if not metadata:
+            print(f"[WARN] No metadata found for sensor {sensor_id}")
+            return
 
-        rule_violations = validate_rules(sensor_id, sensor_value, sensor_type, history)
+        _, sensor_type, unit, last_maintenance_date = metadata
+        history = fetch_opensearch_data(sensor_id, from_time, to_time)
 
-        for action in rule_violations:
-            print(f"[Rule Triggered] {action}")
-            actions.append({
-                "sensor_id": sensor_id,
-                "action": action,
-                "timestamp": timestamp
-            })
+        print(f"[DEBUG] Sensor {sensor_id} | Type: {sensor_type} | Events: {len(history)}")
+
+        rule_hits = validate_rules(sensor_id, sensor_type, unit, history, last_maintenance_date)
+        actions.extend(rule_hits)
+
+        for rule in rule_hits:
+            print(f"[TRIGGERED] {rule}")
 
     except Exception as e:
-        print(f"Error occurred: {e}")
+        print(f"[ERROR] Processing failed: {e}")
+
 
 def consume_loop():
+    last_time = get_last_run_time()
+    now_time = log_run_time()
+
     while True:
         msg = consumer.poll(1.0)
         if msg is None:
             continue
         if msg.error():
-            print("Consumer error: {}".format(msg.error()))
+            print(f"[KAFKA ERROR] {msg.error()}")
             continue
 
-        value = msg.value().decode('utf-8')
+        value = msg.value().decode("utf-8").strip()
         messages.append(value)
-        print(f"Consumed: {value}")
-        guard_maintenance_policy(value)
+        print(f"[CONSUMED] {value}")
+        guard_maintenance_policy(value, last_time or "1970-01-01T00:00:00Z", now_time)
+
 
 @app.get("/consume")
 def get_messages():
     return {"messages": messages[-50:]}
 
+
 @app.get("/actions")
 def get_actions():
-    return {"actions": actions[-50:]}
+    sorted_actions = sorted(actions[-50:], key=lambda x: x.get("ts", ""), reverse=True)
+    return {"actions": sorted_actions}
 
-# Start Kafka consumer thread
+
 threading.Thread(target=consume_loop, daemon=True).start()
 ```
 
-And the `Dockerfile.sub.broker`
+And the `Dockerfile.microservice`
 
 ```Dockerfile
 FROM python:3.11-slim
@@ -685,26 +797,26 @@ RUN apt-get update && apt-get install -y \
     && apt-get clean
 RUN pip install --no-cache-dir \
     confluent-kafka \
+    opensearch \
     fastapi \
     uvicorn \
     pydantic \
     requests \
     psycopg2-binary \
-    geopy
 WORKDIR /app
 COPY . .
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8001"]
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8002", "--reload"]
 ```
 
 Now add this again to the previous docker-compose.yml:
 ```Dockerfile
-  sub-kafka:
+  microservice:
     build:
       context: ./sub
-      dockerfile: Dockerfile.sub.broker
-    container_name: sub-kafka
+      dockerfile: Dockerfile.microservice
+    container_name: microservice
     ports:
-      - "8101:8001"
+      - "8102:8002"
     depends_on:
       - kafka
       - postgres

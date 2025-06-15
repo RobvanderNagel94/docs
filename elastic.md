@@ -155,6 +155,158 @@ title: Elastic
 }
 ```
 
+### Complete example
+```bash
+{
+  "query": {
+    "bool": {
+      "must": [
+        { "match": { "description": "analytics" } }
+      ],
+      "filter": [
+        {
+          "range": {
+            "timestamp": {
+              "gte": "now-30d/d",
+              "lte": "now/d"
+            }
+          }
+        },
+        {
+          "term": { "status": "active" }
+        }
+      ]
+    }
+  },
+  "aggs": {
+    "by_category": {
+      "terms": {
+        "field": "category.keyword"
+      },
+      "aggs": {
+        "avg_price": {
+          "avg": {
+            "field": "price"
+          }
+        },
+        "recent_docs": {
+          "filter": {
+            "range": {
+              "timestamp": {
+                "gte": "now-7d/d"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "size": 0 
+}
+```
+
+### Advanced Example
+```bash
+{
+  "query": {
+    "bool": {
+      "must": [
+        {
+          "match": {
+            "title": {
+              "query": "predictive analytics",
+              "fuzziness": "AUTO"
+            }
+          }
+        },
+        {
+          "range": {
+            "timestamp": {
+              "gte": "now-90d/d",
+              "lte": "now/d"
+            }
+          }
+        }
+      ],
+      "must_not": [
+        {
+          "term": {
+            "status": "archived"
+          }
+        }
+      ],
+      "filter": [
+        {
+          "terms": {
+            "region.keyword": ["us-east", "us-west", "europe"]
+          }
+        }
+      ]
+    }
+  },
+  "aggs": {
+    "category_composite": {
+      "composite": {
+        "size": 100,
+        "sources": [
+          { "category": { "terms": { "field": "category.keyword" }}},
+          { "region":   { "terms": { "field": "region.keyword" }}}
+        ]
+      },
+      "aggs": {
+        "by_date": {
+          "date_histogram": {
+            "field": "timestamp",
+            "calendar_interval": "week"
+          },
+          "aggs": {
+            "avg_price": {
+              "avg": {
+                "field": "price"
+              }
+            },
+            "price_percentiles": {
+              "percentiles": {
+                "field": "price",
+                "percents": [25, 50, 75, 95]
+              }
+            },
+            "top_docs": {
+              "top_hits": {
+                "size": 1,
+                "sort": [
+                  { "timestamp": { "order": "desc" }}
+                ],
+                "_source": {
+                  "includes": ["title", "price", "timestamp"]
+                }
+              }
+            },
+            "custom_score": {
+              "scripted_metric": {
+                "init_script": "state.total = 0",
+                "map_script": "state.total += doc['price'].value * 1.15",
+                "combine_script": "return state.total",
+                "reduce_script": "double sum = 0; for (s in states) { sum += s } return sum"
+              }
+            },
+            "high_price_filter": {
+              "bucket_selector": {
+                "buckets_path": {
+                  "avgPrice": "avg_price"
+                },
+                "script": "params.avgPrice > 500"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "size": 0
+}
+```
+
 ### Search via cURL
 ```bash
 curl -X POST "localhost:9200/my-index/_search" -H "Content-Type: application/json" -d '{

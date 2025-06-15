@@ -40,6 +40,7 @@ services:
       - "9200:9200"
     volumes:
       - opensearch-data:/usr/share/opensearch/data
+      
   postgres:
     image: postgres:${POSTGRES_VERSION}
     container_name: postgres
@@ -54,11 +55,11 @@ services:
     ports:
       - "5433:5432"
 
-  pub-kafka:
+  api-pub-kafka:
     build:
       context: ./pub
-      dockerfile: Dockerfile.pub.broker
-    container_name: pub-kafka
+      dockerfile: Dockerfile.kafka
+    container_name: api-pub-kafka
     ports:
       - "8100:8000"
     depends_on:
@@ -68,13 +69,27 @@ services:
     env_file:
       - .env
 
-  sub-kafka:
+  api-pub-opensearch:
     build:
-      context: ./sub
-      dockerfile: Dockerfile.sub.broker
-    container_name: sub-kafka
+      context: ./pub
+      dockerfile: Dockerfile.opensearch
+    container_name: api-pub-opensearch
     ports:
       - "8101:8001"
+    depends_on:
+      - kafka
+      - postgres
+      - opensearch
+    env_file:
+      - .env
+
+  microservice:
+    build:
+      context: ./sub
+      dockerfile: Dockerfile.microservice
+    container_name: microservice
+    ports:
+      - "8102:8002"
     depends_on:
       - kafka
       - postgres

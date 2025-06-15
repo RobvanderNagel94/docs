@@ -1,48 +1,70 @@
+import os
+import json
+import threading
+from datetime import datetime
 from confluent_kafka import Consumer
 from fastapi import FastAPI
-import threading
-import json
 import requests
 import psycopg2
-from geopy.distance import geodesic
-import statistics
-import os
 
-KAFKA_CONSUME_URL = "http://localhost:8100/consume"
-KAFKA_TOPIC = "sensorvalues"
+KAFKA_TOPIC = "rawsensorvalues"
+LAST_RUN_FILE = "last_runs.txt"
 OPENSEARCH_URL = "http://localhost:9200"
-OPENSEARCH_INDEX = "myindex"
+OPENSEARCH_INDEX = "sensorindex"
+
+messages = []
+actions = []
 
 app = FastAPI()
 
 conf = {
     'bootstrap.servers': 'kafka:29092',
-    'group.id': 'test-group',
-    'auto.offset.reset': 'earliest'
+    'group.id': 'hourly-validator',
+    'auto.offset.reset': 'earliest',
+    'enable.auto.commit': False
 }
 
 consumer = Consumer(conf)
 consumer.subscribe([KAFKA_TOPIC])
 
-messages = []
-actions = []
 
-# Initial positions of sensors
-init_positions = {
-    1: (52.370216, 4.895168),
-    2: (40.712776, -74.005974),
-    3: (34.052235, -33.243683),
-    4: (37.774929, -122.419416),
-}
+def log_run_time():
+    now = datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+    with open(LAST_RUN_FILE, "a") as f:
+        f.write(f"{now}\n")
+    return now
 
-def fetch_opensearch_data(sensor_id):
+
+def get_last_run_time():
+    try:
+        if not os.path.exists(LAST_RUN_FILE):
+            return None
+        with open(LAST_RUN_FILE, "r") as f:
+            lines = f.readlines()
+            if lines:
+                return lines[-1].strip()
+        return None
+    except Exception as e:
+        print(f"[ERROR] Could not read last run time: {e}")
+        return None
+
+
+def fetch_opensearch_data(sensor_id, from_time, to_time):
     try:
         url = f"{OPENSEARCH_URL}/{OPENSEARCH_INDEX}/_search"
         query = {
             "size": 1000,
             "query": {
-                "match": {
-                    "id": str(sensor_id)
+                "bool": {
+                    "must": [
+                        {"match": {"id": str(sensor_id)}},
+                        {"range": {
+                            "ts": {
+                                "gt": from_time,
+                                "lt": to_time
+                            }
+                        }}
+                    ]
                 }
             }
         }
@@ -61,103 +83,119 @@ def fetch_opensearch_data(sensor_id):
 def fetch_postgres_metadata(sensor_id):
     try:
         conn = psycopg2.connect(
-            dbname=os.getenv("POSTGRES_DB"), user=os.getenv("POSTGRES_USER"), password=os.getenv("POSTGRES_PASSWORD"),
-            host="localhost", port=os.getenv("POSTGRES_PORT", "5432")
+            dbname=os.getenv("POSTGRES_DB"),
+            user=os.getenv("POSTGRES_USER"),
+            password=os.getenv("POSTGRES_PASSWORD"),
+            host="localhost",
+            port=os.getenv("POSTGRES_PORT", "5432")
         )
         cur = conn.cursor()
-        cur.execute("SELECT * FROM sensors WHERE id = %s", (sensor_id,))
+        cur.execute("SELECT id, type, unit, last_maintenance_date FROM sensors WHERE id = %s", (sensor_id,))
         result = cur.fetchone()
         cur.close()
         conn.close()
-        return result
+        return result  # (id, type, unit, last_maintenance_date)
     except Exception as e:
         print(f"PostgreSQL error: {e}")
         return None
 
-# Compute distance from initial position
-def compute_total_drift(sensor_id, historical_docs):
-    if not historical_docs:
-        return 0.0
-    init_lat, init_long = init_positions[sensor_id]
-    last = historical_docs[-1]
-    current_lat = last['lat']
-    current_long = last['long']
-    return geodesic((init_lat, init_long), (current_lat, current_long)).meters
 
-# Validate rules and push actions
-def validate_rules(sensor_id, sensor_value, sensor_type, history):
+def validate_rules(sensor_id, sensor_type, unit, history, last_maintenance_date):
     triggered = []
 
-    # Rule 1: Distance drift
-    drift = compute_total_drift(sensor_id, history)
-    if drift > 1000:
-        triggered.append(f"Maintenance: Sensor {sensor_id} drifted {int(drift)} meters")
+    if not history:
+        return triggered
+    for doc in history:
+        
+        humidity = doc.get('humid')
+        temperature = doc.get('temp')
 
-    # Rule 2: Humidity threshold
-    if sensor_type == 'humidity' and sensor_value > 80:
-        triggered.append(f"Alert: Sensor {sensor_id} humidity too high: {sensor_value:.2f}%")
+        if humidity is not None and humidity > 80:
+            triggered.append({
+                "id": sensor_id,
+                "rule": "High humidity > 80",
+                "unit": unit,
+                "type": doc.get('type', sensor_type),
+                "lat": doc.get('lat'),
+                "lon": doc.get('lon'),
+                "last_maintenance_date": last_maintenance_date,
+                "ts": doc.get('ts')
+            })
+            break
 
-    # Rule 3: Value above 75th percentile
-    if len(history) > 10 and sensor_type in ['temperature', 'humidity']:
-        recent_vals = [h[sensor_type] for h in history if sensor_type in h]
-        if recent_vals:
-            p75 = statistics.quantiles(recent_vals, n=4)[2]
-            if all(v > p75 for v in recent_vals[-5:]):
-                triggered.append(f"Spike: Sensor {sensor_id} {sensor_type} persistently above 75th percentile")
-    
+        if temperature is not None and temperature > 70:
+            triggered.append({
+                "id": sensor_id,
+                "rule": "High temperature > 70",
+                "unit": unit,
+                "type": doc.get('type', sensor_type),
+                "lat": doc.get('lat'),
+                "lon": doc.get('lon'),
+                "last_maintenance_date": last_maintenance_date,
+                "ts": doc.get('ts')
+            })
+            break
+
     return triggered
 
-def guard_maintenance_policy(message_value: str):
-    try:
-        message_dict = json.loads(message_value)
-        sensor_id = int(message_dict.get("id"))
-        sensor_value = float(message_dict.get("value"))
-        timestamp = message_dict.get("timestamp")
 
-        if sensor_id not in init_positions:
-            print("ID not in known sensor list.")
+def guard_maintenance_policy(message_value: str, from_time, to_time):
+    try:
+        data = json.loads(message_value)
+        sensor_id = int(data.get("id"))
+        timestamp = data.get("ts")
+
+        if not sensor_id or not timestamp:
+            print("[WARN] Incomplete Kafka message.")
             return
 
-        # Try to infer sensor type
-        sensor_type = "temperature" if sensor_value < 70 else "humidity"
-
-        history = fetch_opensearch_data(sensor_id)
         metadata = fetch_postgres_metadata(sensor_id)
+        if not metadata:
+            print(f"[WARN] No metadata found for sensor {sensor_id}")
+            return
 
-        rule_violations = validate_rules(sensor_id, sensor_value, sensor_type, history)
+        _, sensor_type, unit, last_maintenance_date = metadata
+        history = fetch_opensearch_data(sensor_id, from_time, to_time)
 
-        for action in rule_violations:
-            print(f"[Rule Triggered] {action}")
-            actions.append({
-                "sensor_id": sensor_id,
-                "action": action,
-                "timestamp": timestamp
-            })
+        print(f"[DEBUG] Sensor {sensor_id} | Type: {sensor_type} | Events: {len(history)}")
+
+        rule_hits = validate_rules(sensor_id, sensor_type, unit, history, last_maintenance_date)
+        actions.extend(rule_hits)
+
+        for rule in rule_hits:
+            print(f"[TRIGGERED] {rule}")
 
     except Exception as e:
-        print(f"Error occurred: {e}")
+        print(f"[ERROR] Processing failed: {e}")
+
 
 def consume_loop():
+    last_time = get_last_run_time()
+    now_time = log_run_time()
+
     while True:
         msg = consumer.poll(1.0)
         if msg is None:
             continue
         if msg.error():
-            print("Consumer error: {}".format(msg.error()))
+            print(f"[KAFKA ERROR] {msg.error()}")
             continue
 
-        value = msg.value().decode('utf-8')
+        value = msg.value().decode("utf-8").strip()
         messages.append(value)
-        print(f"Consumed: {value}")
-        guard_maintenance_policy(value)
+        print(f"[CONSUMED] {value}")
+        guard_maintenance_policy(value, last_time or "1970-01-01T00:00:00Z", now_time)
+
 
 @app.get("/consume")
 def get_messages():
     return {"messages": messages[-50:]}
 
+
 @app.get("/actions")
 def get_actions():
-    return {"actions": actions[-50:]}
+    sorted_actions = sorted(actions[-50:], key=lambda x: x.get("ts", ""), reverse=True)
+    return {"actions": sorted_actions}
 
-# Start Kafka consumer thread
+
 threading.Thread(target=consume_loop, daemon=True).start()
